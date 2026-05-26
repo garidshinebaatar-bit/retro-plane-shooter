@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Retro Plane Shooter</title>
+    <style>
+      body {
+        margin: 0;
+        background: #050505;
+        color: white;
+        font-family: "Courier New", Courier, monospace;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        overflow: hidden;
+      }
+      canvas {
+        border: 4px solid #444;
+        box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+        background: #000;
+        cursor: crosshair;
+      }
+      .ui {
+        margin-top: 10px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gameCanvas" width="400" height="600"></canvas>
+
+    <div class="ui">
+      <p>USE <b>ARROW KEYS</b> TO MOVE | <b>SPACE</b> TO SHOOT</p>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+
+      const playerImg = new Image();
+      playerImg.src = "plane.png";
+      const enemyImg = new Image();
+      enemyImg.src = "enemy.png";
+
+      let score = 0;
+      let isGameOver = false;
+
+      let isBossActive = false;
+      let nextBossScore = 1500;
+      let bossCount = 0;
+      let boss = null;
+
+      const player = {
+        x: 180,
+        y: 520,
+        w: 40,
+        h: 40,
+        speed: 7,
+        lives: 15,
+        hasMultiShot: false,
+        multiShotTimer: 0,
+        hasShield: false,
+        shieldTimer: 0,
+      };
+
+      const bullets = [];
+      const enemies = [];
+      const enemyBullets = [];
+      const drops = [];
+      const keys = {};
+
+      window.addEventListener("keydown", (e) => (keys[e.code] = true));
+      window.addEventListener("keyup", (e) => (keys[e.code] = false));
+
+      function spawnEnemy() {
+        if (isGameOver || isBossActive) return;
+        enemies.push({
+          x: Math.random() * (canvas.width - 30),
+          y: -30,
+          w: 30,
+          h: 30,
+          speed: 3,
+          bulletsShot: 0,
+          lastShotTime: 0,
+          lives: 5,
+          flashTimer: 0,
+        });
+      }
+
+      function triggerBossStage() {
+        isBossActive = true;
+        bossCount++;
+        const maxHp = 100 * bossCount;
+        boss = {
+          x: canvas.width / 2 - 40,
+          y: -80,
+          w: 80,
+          h: 60,
+          hp: maxHp,
+          maxHp: maxHp,
+          speedX: 2,
+          targetY: 60,
+          lastShotTime: 0,
+          flashTimer: 0,
+        };
+      }
+
+      function spawnDrop(x, y, forcedType = null) {
+        if (Math.random() < 0.4 || forcedType) {
+          const type =
+            forcedType || (Math.random() < 0.5 ? "multishot" : "shield");
+          drops.push({
+            x: x,
+            y: y,
+            w: 16,
+            h: 16,
+            type: type,
+            speed: 2,
+          });
+        }
+      }
+
+      function rectIntersect(x1, y1, w1, h1, x2, y2, w2, h2) {
+        return x2 < x1 + w1 && x2 + w2 > x1 && y2 < y1 + h1 && y2 + h2 > y1;
+      }
+
+      function registerHit() {
+        if (player.hasShield) return;
+
+        player.lives--;
+        if (player.lives <= 0) {
+          player.lives = 0;
+          isGameOver = true;
+        }
+      }
+
+      function update() {
+        if (isGameOver) {
+          if (keys["Enter"]) resetGame();
+          return;
+        }
+
+        if (!isBossActive && score >= nextBossScore) {
+          triggerBossStage();
+          nextBossScore += 1500;
+        }
+
+        if (player.hasMultiShot) {
+          player.multiShotTimer--;
+          if (player.multiShotTimer <= 0) player.hasMultiShot = false;
+        }
+        if (player.hasShield) {
+          player.shieldTimer--;
+          if (player.shieldTimer <= 0) player.hasShield = false;
+        }
+
+        if (keys["ArrowLeft"] && player.x > 0) player.x -= player.speed;
+        if (keys["ArrowRight"] && player.x < canvas.width - player.w)
+          player.x += player.speed;
+
+        if (keys["Space"]) {
+          if (
+            bullets.length === 0 ||
+            bullets[bullets.length - 1].y < player.y - 15
+          ) {
+            if (player.hasMultiShot) {
+              bullets.push({
+                x: player.x + player.w / 2 - 2,
+                y: player.y,
+                w: 4,
+                h: 12,
+                vx: 0,
+              });
+              bullets.push({
+                x: player.x + 5,
+                y: player.y + 10,
+                w: 4,
+                h: 12,
+                vx: -2,
+              });
+              bullets.push({
+                x: player.x + player.w - 9,
+                y: player.y + 10,
+                w: 4,
+                h: 12,
+                vx: 2,
+              });
+            } else {
+              bullets.push({
+                x: player.x + player.w / 2 - 2,
+                y: player.y,
+                w: 4,
+                h: 12,
+                vx: 0,
+              });
+            }
+          }
+        }
+
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          bullets[i].y -= 10;
+          if (bullets[i].vx) bullets[i].x += bullets[i].vx;
+          if (
+            bullets[i].y < 0 ||
+            bullets[i].x < 0 ||
+            bullets[i].x > canvas.width
+          ) {
+            bullets.splice(i, 1);
+          }
+        }
+
+        const currentTime = Date.now();
+        if (isBossActive && boss) {
+          if (boss.flashTimer > 0) boss.flashTimer--;
+
+          if (boss.y < boss.targetY) {
+            boss.y += 1;
+          } else {
+            boss.x += boss.speedX;
+            if (boss.x <= 10 || boss.x >= canvas.width - boss.w - 10) {
+              boss.speedX *= -1;
+            }
+          }
+
+          if (
+            boss.y >= boss.targetY &&
+            currentTime - boss.lastShotTime > 1000
+          ) {
+            enemyBullets.push({
+              x: boss.x + boss.w / 2 - 2,
+              y: boss.y + boss.h,
+              w: 5,
+              h: 15,
+              vx: 0,
+            });
+            enemyBullets.push({
+              x: boss.x + boss.w / 4,
+              y: boss.y + boss.h,
+              w: 5,
+              h: 15,
+              vx: -1.5,
+            });
+            enemyBullets.push({
+              x: boss.x + (boss.w * 3) / 4,
+              y: boss.y + boss.h,
+              w: 5,
+              h: 15,
+              vx: 1.5,
+            });
+            boss.lastShotTime = currentTime;
+          }
+
+          if (
+            rectIntersect(
+              player.x,
+              player.y,
+              player.w,
+              player.h,
+              boss.x,
+              boss.y,
+              boss.w,
+              boss.h
+            )
+          ) {
+            registerHit();
+          }
+
+          for (let j = bullets.length - 1; j >= 0; j--) {
+            let b = bullets[j];
+            if (
+              rectIntersect(boss.x, boss.y, boss.w, boss.h, b.x, b.y, b.w, b.h)
+            ) {
+              bullets.splice(j, 1);
+              boss.hp--;
+              boss.flashTimer = 4;
+
+              if (boss.hp <= 0) {
+                spawnDrop(
+                  boss.x + boss.w / 2 - 20,
+                  boss.y + boss.h / 2,
+                  "multishot"
+                );
+                spawnDrop(
+                  boss.x + boss.w / 2 + 10,
+                  boss.y + boss.h / 2,
+                  "shield"
+                );
+                score += 500;
+                isBossActive = false;
+                boss = null;
+              }
+              break;
+            }
+          }
+        }
+
+        for (let i = enemyBullets.length - 1; i >= 0; i--) {
+          enemyBullets[i].y += 6;
+          if (enemyBullets[i].vx) enemyBullets[i].x += enemyBullets[i].vx;
+
+          if (
+            rectIntersect(
+              player.x,
+              player.y,
+              player.w,
+              player.h,
+              enemyBullets[i].x,
+              enemyBullets[i].y,
+              enemyBullets[i].w,
+              enemyBullets[i].h
+            )
+          ) {
+            registerHit();
+            enemyBullets.splice(i, 1);
+            continue;
+          }
+
+          if (
+            enemyBullets[i].y > canvas.height ||
+            enemyBullets[i].x < 0 ||
+            enemyBullets[i].x > canvas.width
+          ) {
+            enemyBullets.splice(i, 1);
+          }
+        }
+
+        for (let i = drops.length - 1; i >= 0; i--) {
+          drops[i].y += drops[i].speed;
+
+          if (
+            rectIntersect(
+              player.x,
+              player.y,
+              player.w,
+              player.h,
+              drops[i].x,
+              drops[i].y,
+              drops[i].w,
+              drops[i].h
+            )
+          ) {
+            if (drops[i].type === "multishot") {
+              player.hasMultiShot = true;
+              player.multiShotTimer = 400;
+            } else if (drops[i].type === "shield") {
+              player.hasShield = true;
+              player.shieldTimer = 400;
+            }
+            drops.splice(i, 1);
+            continue;
+          }
+          if (drops[i].y > canvas.height) drops.splice(i, 1);
+        }
+
+        if (!isBossActive && Math.random() < 0.03) spawnEnemy();
+
+        for (let i = enemies.length - 1; i >= 0; i--) {
+          let en = enemies[i];
+          en.y += en.speed;
+
+          if (en.flashTimer > 0) en.flashTimer--;
+
+          if (
+            en.bulletsShot < 5 &&
+            en.y > 0 &&
+            currentTime - en.lastShotTime > 800
+          ) {
+            if (Math.random() < 0.02) {
+              enemyBullets.push({
+                x: en.x + en.w / 2 - 2,
+                y: en.y + en.h,
+                w: 4,
+                h: 12,
+                vx: 0,
+              });
+              en.bulletsShot++;
+              en.lastShotTime = currentTime;
+            }
+          }
+
+          if (
+            rectIntersect(
+              player.x,
+              player.y,
+              player.w,
+              player.h,
+              en.x,
+              en.y,
+              en.w,
+              en.h
+            )
+          ) {
+            registerHit();
+            enemies.splice(i, 1);
+            continue;
+          }
+
+          for (let j = bullets.length - 1; j >= 0; j--) {
+            let b = bullets[j];
+            if (rectIntersect(en.x, en.y, en.w, en.h, b.x, b.y, b.w, b.h)) {
+              bullets.splice(j, 1);
+              en.lives--;
+              en.flashTimer = 5;
+
+              if (en.lives <= 0) {
+                spawnDrop(en.x + en.w / 2 - 8, en.y + en.h / 2);
+                enemies.splice(i, 1);
+                score += 10;
+              }
+              break;
+            }
+          }
+
+          if (en.y > canvas.height) enemies.splice(i, 1);
+        }
+      }
+
+      function draw() {
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        if (player.hasShield) {
+          ctx.strokeStyle = "#0cf";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(
+            player.x + player.w / 2,
+            player.y + player.h / 2,
+            player.w / 1.3,
+            0,
+            Math.PI * 2
+          );
+          ctx.stroke();
+        }
+
+        ctx.drawImage(playerImg, player.x, player.y, player.w, player.h);
+
+        ctx.fillStyle = "#ff0";
+        bullets.forEach((b) => ctx.fillRect(b.x, b.y, b.w, b.h));
+
+        ctx.fillStyle = "#f05";
+        enemyBullets.forEach((eb) => ctx.fillRect(eb.x, eb.y, eb.w, eb.h));
+
+        drops.forEach((d) => {
+          ctx.fillStyle = d.type === "multishot" ? "#0f0" : "#0cf";
+          ctx.fillRect(d.x, d.y, d.w, d.h);
+          ctx.fillStyle = "#fff";
+          ctx.font = "10px sans-serif";
+          ctx.fillText(d.type === "multishot" ? "M" : "S", d.x + 4, d.y + 12);
+        });
+
+        enemies.forEach((en) => {
+          ctx.save();
+          if (en.flashTimer > 0) ctx.globalAlpha = 0.4;
+          ctx.drawImage(enemyImg, en.x, en.y, en.w, en.h);
+          ctx.restore();
+        });
+
+        if (isBossActive && boss) {
+          ctx.save();
+          if (boss.flashTimer > 0) ctx.globalAlpha = 0.4;
+
+          ctx.fillStyle = "#ff3333";
+          ctx.fillRect(boss.x, boss.y, boss.w, boss.h);
+          ctx.drawImage(enemyImg, boss.x, boss.y, boss.w, boss.h);
+          ctx.restore();
+
+          ctx.fillStyle = "white";
+          ctx.font = "12px monospace";
+          ctx.fillText(`BOSS WARNING`, canvas.width / 2 - 45, 15);
+
+          ctx.fillStyle = "#333";
+          ctx.fillRect(50, 20, 300, 8);
+          ctx.fillStyle = "#ff0000";
+          const bossBarWidth = (boss.hp / boss.maxHp) * 300;
+          ctx.fillRect(50, 20, bossBarWidth, 8);
+        }
+
+        ctx.fillStyle = "white";
+        ctx.font = "20px monospace";
+        ctx.textAlign = "left";
+        ctx.fillText(`SCORE: ${score}`, 20, 45);
+        ctx.fillText(`LIVES: ${player.lives}`, 260, 45);
+
+        if (isGameOver) {
+          ctx.fillStyle = "rgba(0,0,0,0.8)";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "red";
+          ctx.textAlign = "center";
+          ctx.font = "40px monospace";
+          ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2);
+          ctx.fillStyle = "white";
+          ctx.font = "20px monospace";
+          ctx.fillText(
+            "PRESS ENTER TO RESTART",
+            canvas.width / 2,
+            canvas.height / 2 + 50
+          );
+        }
+
+        requestAnimationFrame(() => {
+          update();
+          draw();
+        });
+      }
+
+      function resetGame() {
+        score = 0;
+        enemies.length = 0;
+        bullets.length = 0;
+        enemyBullets.length = 0;
+        drops.length = 0;
+        isBossActive = false;
+        boss = null;
+        bossCount = 0;
+        nextBossScore = 1500;
+        player.x = 180;
+        player.lives = 25;
+        player.hasMultiShot = false;
+        player.hasShield = false;
+        isGameOver = false;
+      }
+
+      draw();
+    </script>
+  </body>
+</html>
